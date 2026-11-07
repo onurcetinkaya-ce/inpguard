@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,21 +8,33 @@ version = "0.1.0"
 description = "Defensive linting for EPANET .inp water-network model files"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Onur Çetinkaya" }]
 keywords = ["epanet", "water", "scada", "ics", "security", "lint"]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
   "Intended Audience :: System Administrators",
-  "Topic :: Security",
-  "Topic :: Scientific/Engineering :: Hydrology",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Hydrology",
+  "Topic :: Security",
+  "Topic :: Utilities",
 ]
 dependencies = []
 
 [project.urls]
+Homepage = "https://github.com/onurcetinkaya-ce/inpguard"
 Source = "https://github.com/onurcetinkaya-ce/inpguard"
+Issues = "https://github.com/onurcetinkaya-ce/inpguard/issues"
+Security = "https://github.com/onurcetinkaya-ce/inpguard/security/policy"
 
 [project.scripts]
 inpguard = "inpguard.cli:main"

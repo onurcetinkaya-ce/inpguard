@@ -31,6 +31,14 @@ byte offsets and line numbers rather than stack traces.
 ## Install
 
 ```bash
+pip install inpguard
+```
+
+For development, install from a clone:
+
+```bash
+git clone https://github.com/onurcetinkaya-ce/inpguard.git
+cd inpguard
 pip install -e .
 ```
 
