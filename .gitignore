@@ -1,0 +1,24 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Scratch output and validation downloads
+*.log
+*.inp
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

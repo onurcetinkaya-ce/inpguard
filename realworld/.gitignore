@@ -1,0 +1,3 @@
+# realworld/ holds .inp files downloaded from USEPA/WNTR for validation only.
+# They are not redistributed; see README for provenance.
+*.inp
