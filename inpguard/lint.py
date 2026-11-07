@@ -6,6 +6,9 @@ Design rules that matter more than the checks themselves:
   * Severity is about *consequence*, not aesthetics: ERROR blocks a file from
     entering an unsafe parser, WARN is a smell, INFO is context.
   * No third-party imports. This must run in a locked-down CI container.
+  * The linter must survive the inputs it exists to flag. Bounded time, bounded
+    memory, bounded output. A tool that can be made to exhaust memory by the
+    file it is inspecting has reproduced the bug it was written to prevent.
 """
 
 from __future__ import annotations
@@ -52,7 +55,6 @@ class Section:
     offset: int
     line: int
     rows: int = 0
-    data: list[tuple[int, list[str]]] = field(default_factory=list)
 
 
 @dataclass
@@ -61,6 +63,10 @@ class Report:
     sections: list[Section] = field(default_factory=list)
     bytes_read: int = 0
     lines_read: int = 0
+    # code -> number of findings dropped after the per-code cap was reached
+    suppressed: dict[str, int] = field(default_factory=dict)
+    # code -> number of findings actually kept; keeps Report.add O(1)
+    _kept: dict[str, int] = field(default_factory=dict)
 
     @property
     def errors(self) -> list[Finding]:
@@ -77,6 +83,21 @@ class Report:
         return sorted(
             self.findings, key=lambda f: (_SEVERITY_ORDER[f.severity], f.offset)
         )
+
+    def add(self, finding: Finding) -> None:
+        """Record a finding, enforcing the per-code output cap.
+
+        Dropping is per-code and counted, never silent: the report states how
+        many occurrences of each code were elided, so a reader can tell "one
+        bad row" apart from "two million bad rows".
+        """
+        cap = LIMITS["findings_per_code"]
+        seen = self._kept.get(finding.code, 0)
+        if seen >= cap:
+            self.suppressed[finding.code] = self.suppressed.get(finding.code, 0) + 1
+            return
+        self._kept[finding.code] = seen + 1
+        self.findings.append(finding)
 
 
 def _is_number(tok: str) -> bool:
@@ -122,7 +143,7 @@ def lint_bytes(
     ceiling = LIMITS["float32_max"] if float_ceiling is None else float_ceiling
 
     if len(raw) > LIMITS["file_bytes"]:
-        report.findings.append(
+        report.add(
             Finding(
                 ERROR,
                 "INP001",
@@ -146,12 +167,22 @@ def lint_bytes(
     pattern_refs: list[tuple[str, int, int]] = []
     curve_refs: list[tuple[str, int, int]] = []
     node_refs: list[tuple[str, int, int]] = []
+    refs_truncated = False
+
+    def _keep(bucket: list[tuple[str, int, int]], item: tuple[str, int, int]) -> None:
+        """Append a pending reference, bounded in aggregate across all buckets."""
+        nonlocal refs_truncated
+        total = len(pattern_refs) + len(curve_refs) + len(node_refs)
+        if total >= LIMITS["refs"]:
+            refs_truncated = True
+            return
+        bucket.append(item)
 
     for offset, line_no, raw_line in _iter_lines(raw):
         report.lines_read = line_no
 
         if len(raw_line) > LIMITS["line_bytes"]:
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP002",
@@ -169,7 +200,7 @@ def lint_bytes(
 
         bad = [b for b in line if b in FORBIDDEN_CONTROL]
         if bad:
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP003",
@@ -186,7 +217,7 @@ def lint_bytes(
         try:
             text = line.decode("utf-8")
         except UnicodeDecodeError:
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP004",
@@ -219,13 +250,13 @@ def lint_bytes(
         if stripped.startswith("[") and stripped.endswith("]"):
             name = stripped[1:-1].strip().upper()
             if not name:
-                report.findings.append(
+                report.add(
                     Finding(ERROR, "INP005", "empty section header", offset, line_no)
                 )
                 continue
             seen_sections += 1
             if name not in KNOWN_SECTIONS:
-                report.findings.append(
+                report.add(
                     Finding(
                         WARN,
                         "INP010",
@@ -241,7 +272,7 @@ def lint_bytes(
                 # it, and real exports from EPA's own test suite do this for
                 # [REACTIONS], [DEMANDS] and [TAGS]. Reporting it as a warning
                 # would be wrong; it is noted as context for a reviewer.
-                report.findings.append(
+                report.add(
                     Finding(
                         INFO,
                         "INP011",
@@ -258,7 +289,7 @@ def lint_bytes(
             continue
 
         if current is None:
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP006",
@@ -271,7 +302,7 @@ def lint_bytes(
 
         current.rows += 1
         if current.rows > LIMITS["rows_per_section"]:
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP007",
@@ -288,7 +319,7 @@ def lint_bytes(
         tokens = stripped.split()
         for tok in tokens:
             if len(tok) > LIMITS["token_bytes"]:
-                report.findings.append(
+                report.add(
                     Finding(
                         WARN,
                         "INP012",
@@ -301,7 +332,9 @@ def lint_bytes(
                 )
                 break
 
-        current.data.append((offset, tokens))
+        # Rows are deliberately NOT retained. Nothing downstream reads them,
+        # and buffering every row of a 2M-row file cost ~90x the input size in
+        # RSS. The checks below run streaming, off the token list only.
 
         _check_semantics(
             report,
@@ -317,16 +350,29 @@ def lint_bytes(
             pattern_refs,
             curve_refs,
             node_refs,
+            _keep,
         )
 
     if seen_sections > LIMITS["sections"]:
-        report.findings.append(
+        report.add(
             Finding(
                 ERROR,
                 "INP008",
                 f"{seen_sections} sections exceeds the limit of {LIMITS['sections']}",
                 0,
                 0,
+            )
+        )
+
+    if refs_truncated:
+        report.add(
+            Finding(
+                WARN,
+                "INP014",
+                f"more than {LIMITS['refs']} cross-references; remaining "
+                "reference checks were skipped — findings are a lower bound",
+                0,
+                report.lines_read,
             )
         )
 
@@ -337,7 +383,7 @@ def lint_bytes(
         )
 
     if "END" not in section_names:
-        report.findings.append(
+        report.add(
             Finding(
                 WARN,
                 "INP013",
@@ -364,6 +410,7 @@ def _check_semantics(
     pattern_refs: list[tuple[str, int, int]],
     curve_refs: list[tuple[str, int, int]],
     node_refs: list[tuple[str, int, int]],
+    keep,
 ) -> None:
     name = section.name
 
@@ -375,7 +422,7 @@ def _check_semantics(
         ident = tokens[0]
         table = node_ids if name in NODE_SECTIONS else link_ids
         if ident in table:
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP020",
@@ -393,10 +440,10 @@ def _check_semantics(
         # warns, which is how a linter gets switched off in production.
         if name == "JUNCTIONS" and len(tokens) >= 4:
             if not _is_number(tokens[3]):
-                pattern_refs.append((tokens[3], offset, line_no))
+                keep(pattern_refs, (tokens[3], offset, line_no))
         elif name == "PIPES" and len(tokens) >= 6:
             if not _is_number(tokens[5]):
-                pattern_refs.append((tokens[5], offset, line_no))
+                keep(pattern_refs, (tokens[5], offset, line_no))
     elif name == "PATTERNS":
         pattern_ids.add(tokens[0])
     elif name == "CURVES":
@@ -408,7 +455,7 @@ def _check_semantics(
             continue
         val = float(tok)
         if math.isnan(val) or math.isinf(val):
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP021",
@@ -419,7 +466,7 @@ def _check_semantics(
                 )
             )
         elif abs(val) > ceiling:
-            report.findings.append(
+            report.add(
                 Finding(
                     WARN,
                     "INP022",
@@ -431,7 +478,7 @@ def _check_semantics(
                 )
             )
         elif "_" in tok:
-            report.findings.append(
+            report.add(
                 Finding(
                     WARN,
                     "INP023",
@@ -445,19 +492,17 @@ def _check_semantics(
 
     # --- section-specific reference and domain checks ---------------------
     if name == "PIPES" and len(tokens) >= 3:
-        node_refs.append((tokens[1], offset, line_no))
-        node_refs.append((tokens[2], offset, line_no))
+        keep(node_refs, (tokens[1], offset, line_no))
+        keep(node_refs, (tokens[2], offset, line_no))
     elif name in {"PUMPS", "VALVES"} and len(tokens) >= 3:
         # Both formats are: ID, Node1, Node2, then parameters. Using columns 2
         # and 3 here silently reads parameter keywords ("HEAD", "POWER") as node
         # identifiers, which is how a linter earns a reputation for noise.
-        node_refs.append((tokens[1], offset, line_no))
-        node_refs.append((tokens[2], offset, line_no))
+        keep(node_refs, (tokens[1], offset, line_no))
+        keep(node_refs, (tokens[2], offset, line_no))
     elif name == "DEMANDS":
         if len(tokens) >= 2 and not _is_number(tokens[1]):
-            pattern_refs.append((tokens[1], offset, line_no))
-    elif name in {"STATUS", "EMITTERS"}:
-        pass
+            keep(pattern_refs, (tokens[1], offset, line_no))
 
     # Curves referenced by pumps/valves (HEAD / curve identifiers).
     if name == "PUMPS":
@@ -466,11 +511,7 @@ def _check_semantics(
         if marker >= 0:
             rest = text[marker + 5 :].split()
             if rest and not _is_number(rest[0]):
-                curve_refs.append((rest[0], offset, line_no))
-
-    # [TIMES] pattern timestep must be positive and bounded.
-    if name == "TIMES":
-        pass
+                keep(curve_refs, (rest[0], offset, line_no))
 
 
 def _check_references(
@@ -485,7 +526,7 @@ def _check_references(
 ) -> None:
     for ref, offset, line_no in pattern_refs:
         if ref not in pattern_ids:
-            report.findings.append(
+            report.add(
                 Finding(
                     WARN,
                     "INP030",
@@ -497,7 +538,7 @@ def _check_references(
             )
     for ref, offset, line_no in curve_refs:
         if ref not in curve_ids:
-            report.findings.append(
+            report.add(
                 Finding(
                     WARN,
                     "INP031",
@@ -509,7 +550,7 @@ def _check_references(
             )
     for ref, offset, line_no in node_refs:
         if ref not in node_ids:
-            report.findings.append(
+            report.add(
                 Finding(
                     ERROR,
                     "INP032",

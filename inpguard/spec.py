@@ -66,6 +66,16 @@ LIMITS = {
     "float32_max": 3.4028235e38,         # IEEE-754 binary32 ceiling
     "int32_max": 2_147_483_647,          # historically used as row/id type
     "pattern_period_hours": 24 * 365 * 10,  # 10 years
+    # Findings are capped per code. A linter is itself an attack surface: a
+    # 3 MB file of repeated rows produced 400k findings and 288 MB of RSS
+    # before this cap existed, which is a denial of service in the tool whose
+    # job is to prevent one. The cap is per-code so that one noisy rule cannot
+    # crowd out a different, more serious finding.
+    "findings_per_code": 50,
+    # Reference occurrences retained for the cross-section pass. Beyond this the
+    # linter stops accumulating and says so (INP014) rather than growing without
+    # bound; the cap is ~1000x what any real network needs.
+    "refs": 20_000,
 }
 
 # Characters that must never appear raw in a well-formed .inp file. NUL

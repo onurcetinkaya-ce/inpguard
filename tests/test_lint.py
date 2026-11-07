@@ -207,6 +207,69 @@ class RealWorldRegressionTests(unittest.TestCase):
         self.assertTrue(report.ok(), [str(f) for f in report.findings])
 
 
+class AmplificationTests(unittest.TestCase):
+    """The linter must not be turned into the thing it defends against.
+
+    Found by feeding inpguard a 3 MB file of repeated identical rows. It
+    produced 400,002 findings and peaked at 288 MB RSS -- a denial of service
+    in the tool whose entire purpose is preventing one. Both are capped now.
+    """
+
+    def test_findings_are_capped_per_code(self) -> None:
+        raw = b"[JUNCTIONS]\n" + b"a b c d e f g h\n" * 5000 + b"[END]\n"
+        report = lint_bytes(raw)
+        cap = LIMITS["findings_per_code"]
+        dupes = [f for f in report.findings if f.code == "INP020"]
+        self.assertEqual(len(dupes), cap)
+        # The elisions must be counted, not silently swallowed.
+        self.assertIn("INP020", report.suppressed)
+        self.assertEqual(report.suppressed["INP020"], 5000 - 1 - cap)
+
+    def test_cap_does_not_hide_other_codes(self) -> None:
+        """One noisy rule must not crowd a different finding out of the report."""
+        raw = (
+            b"[JUNCTIONS]\n"
+            + b"a b c d e f g h\n" * 200
+            + b"[PIPES]\n P1 NOPE1 NOPE2 1 1 1 1 Open\n"
+            + b"[END]\n"
+        )
+        report = lint_bytes(raw)
+        codes = {f.code for f in report.findings}
+        self.assertIn("INP020", codes)
+        self.assertIn("INP032", codes)
+
+    def test_clean_file_not_truncated(self) -> None:
+        report = lint_text(CLEAN)
+        self.assertEqual(report.suppressed, {})
+
+    def test_reference_buckets_bounded(self) -> None:
+        """A file with more refs than the cap must warn, not grow unbounded."""
+        rows = b"".join(
+            b"P%d J%d J%d 1 1 1 1 Open\n" % (i, i, i + 1)
+            for i in range(LIMITS["refs"] + 100)
+        )
+        raw = b"[JUNCTIONS]\n J0 1 1\n[PIPES]\n" + rows + b"[END]\n"
+        report = lint_bytes(raw)
+        self.assertIn("INP014", {f.code for f in report.findings})
+
+    def test_suppressed_reported_in_json(self) -> None:
+        from inpguard.cli import _render_json
+
+        raw = b"[JUNCTIONS]\n" + b"a b c d\n" * 200 + b"[END]\n"
+        report = lint_bytes(raw)
+        payload = _render_json(report, "x.inp")
+        self.assertIn('"suppressed"', payload)
+        self.assertIn("INP020", payload)
+
+    def test_text_output_is_bounded(self) -> None:
+        """Output size must not scale with the number of bad rows."""
+        from inpguard.cli import _render_text
+
+        small = _render_text(lint_bytes(b"[JUNCTIONS]\n" + b"a b c d\n" * 10), "x")
+        huge = _render_text(lint_bytes(b"[JUNCTIONS]\n" + b"a b c d\n" * 50_000), "x")
+        self.assertLess(len(huge), len(small) * 10)
+
+
 class DeterminismTests(unittest.TestCase):
     def test_findings_are_ordered(self) -> None:
         report = lint_text(get("dangling_node").data)

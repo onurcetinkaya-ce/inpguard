@@ -26,6 +26,10 @@ def _render_text(report: Report, path: str) -> str:
         return "\n".join(lines)
     for finding in findings:
         lines.append(f"  {finding}")
+    for code, count in sorted(report.suppressed.items()):
+        lines.append(
+            f"  NOTE  {code:12s} {count} further finding(s) of this code suppressed"
+        )
     errors = len(report.errors)
     warns = len(report.warnings)
     lines.append(f"  {errors} error(s), {warns} warning(s)")
@@ -50,6 +54,7 @@ def _render_json(report: Report, path: str) -> str:
             }
             for f in report.sorted_findings()
         ],
+        "suppressed": dict(sorted(report.suppressed.items())),
     }
     return json.dumps(payload, indent=2)
 

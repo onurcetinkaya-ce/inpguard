@@ -79,6 +79,7 @@ print(report.ok())
 | INP011 | WARN | Section appears more than once |
 | INP012 | WARN | Token exceeds 256 bytes (fixed-buffer hazard) |
 | INP013 | WARN | No `[END]` section |
+| INP014 | WARN | Cross-reference limit reached; reference findings are a lower bound |
 | INP020 | ERROR | Duplicate node/link identifier |
 | INP021 | ERROR | Non-finite numeric literal (`nan`, `inf`) |
 | INP022 | WARN | Value overflows IEEE-754 single precision |
@@ -119,21 +120,38 @@ fail against, and so that a parser author can reproduce a report.
 
 ## Validation
 
-Six models from the USEPA/WNTR reference test suite — including the 847 KB
-`Net6_plus.inp` benchmark — lint with **zero errors and zero warnings**. Two
-files that exist specifically to be malformed produce exactly one finding each,
-the one they were built to contain.
+Validated against 17 `.inp` files it did not author, ~37,400 lines in total,
+from two independent publishing bodies.
+
+**Nine benchmark distribution networks** — C-Town, d-town, Modena, Jilin, Zhi
+Jiang, KL, ky1, ky8, RuralNetwork — sourced from the DiTEC-WDN corpus
+(Truong et al., *Scientific Data* 2025): **zero errors, zero warnings**. Sizes
+range from 234 to 7,731 lines.
+
+**Eight files from the USEPA/WNTR reference suite**, including the 847 KB
+`Net6_plus.inp` benchmark: five lint completely clean; the three that do not are
+malformed on purpose and produce exactly one finding each, the one they were
+built to contain.
 
 The first run against those files produced 66 false positives and exposed three
 real bugs (inline `;` comments, `[PUMPS]`/`[VALVES]` column indexing, repeated
-sections). Each is fixed and carries a regression test. See `VALIDATION.md` for
-the full table and method.
+sections). Each is fixed and carries a regression test. Adversarial self-testing
+separately found and fixed a resource-amplification bug in this tool.
+
+See `VALIDATION.md` for the full tables, method, and a candid statement of what
+a clean result does and does not demonstrate.
 
 ## Status
 
 `0.1.0` — alpha. The rule set is deliberately conservative: it flags only what
 is unambiguous in the format specification. Rules that would warn on a
 legitimate file exported from a common modelling tool are bugs, not features.
+
+Output and memory are bounded: findings are capped per rule code (with the number
+of elided occurrences reported, never silently dropped), and cross-reference
+checking is capped with an explicit `INP014` rather than growing without limit.
+A 3.2 MB adversarial file that once produced 400,002 findings and 287.9 MB peak
+RSS now produces 106 findings and 38.7 MB. See `VALIDATION.md`.
 
 ## License
 

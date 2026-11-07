@@ -1,24 +1,33 @@
-# Byte-compiled / cache
+# Downloaded third-party corpora — never redistributed. See VALIDATION.md.
+realworld/*.inp
+realworld/*.INP
+realworld/**/*.inp
+realworld/**/*.INP
+
+# Adversarial scratch inputs built during self-testing
+realworld/bomb*.inp
+
+# Local scratch output from validation runs
+*.log
+*_out.txt
+*_err.txt
+mem*.txt
+testres*.txt
+gstat.txt
+ditec_run.txt
+rw_check.txt
+ls.txt
+_scratch*
+*.tmp
+
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Distribution
+*.egg-info/
 build/
 dist/
-*.egg-info/
-.eggs/
-
-# Environments
 .venv/
 venv/
-env/
 
-# Scratch output and validation downloads
-*.log
-*.inp
-
-# Editor / OS
+# OS
 .DS_Store
-.idea/
-.vscode/
